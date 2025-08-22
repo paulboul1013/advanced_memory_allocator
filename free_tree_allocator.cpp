@@ -16,27 +16,41 @@ FreeTreeAllocator::FreeTreeAllocator(std::size_t totalSize) : Allocator(totalSiz
     this->l=nullptr;
     this->r=nullptr;
     this->root=nullptr;
+    this->allocated_ptr=nullptr;
+    this->is_main_allocator=true; // 預設為主分配器
 }
 
 //destructor
 FreeTreeAllocator::~FreeTreeAllocator() {
-    free(m_start_ptr);
-    m_start_ptr = nullptr;
+    // 只有主分配器才釋放大塊記憶體
+    if (is_main_allocator && m_start_ptr != nullptr) {
+        free(m_start_ptr);
+        m_start_ptr = nullptr;
+    }
     this->free_tree(this->root);
     this->root=nullptr;
 
 }
 
 void FreeTreeAllocator::Init() {
-    if (m_start_ptr!=nullptr){
-        free(m_start_ptr);
+    // 清理舊的樹結構
+    if (this->root != nullptr) {
+        free_tree(this->root);
+        this->root = nullptr;
     }
-    m_start_ptr = malloc(m_totalSize);
+    
+    // 只在第一次或需要重新分配時分配記憶體
+    if (m_start_ptr == nullptr) {
+        m_start_ptr = malloc(m_totalSize);
+    }
+    
     m_offset = 0;
-    this->l=nullptr;
-    this->r=nullptr;
-    this->size=m_totalSize;
-    this->root=nullptr;
+    this->l = nullptr;
+    this->r = nullptr;
+    this->size = m_totalSize;
+    this->root = nullptr;
+    this->allocated_ptr = nullptr;
+    this->is_main_allocator = true;
 }
 
 //free tree structure
@@ -94,12 +108,16 @@ void *FreeTreeAllocator::Allocate(std::size_t size,const std::size_t alignment){
         return nullptr;
     }
 
+    // 計算實際分配的記憶體地址
+    void* allocated_address = (void*)(currentAddress + padding);
+    
     m_offset += padding + size;
-    void * block_address = nullptr;
 
     FreeTreeAllocator *new_node=new FreeTreeAllocator(m_offset);
     new_node->size=size;
-    block_address=insert_free_tree(&this->root,new_node);
+    new_node->allocated_ptr = allocated_address; // 儲存實際分配的地址
+    new_node->is_main_allocator = false; // 節點不是主分配器
+    insert_free_tree(&this->root,new_node);
 
     #ifdef _DEBUG
     std::cout << "========== binary search tree allocator分配記憶體 ==========" << std::endl;
@@ -107,7 +125,7 @@ void *FreeTreeAllocator::Allocate(std::size_t size,const std::size_t alignment){
     std::cout << "  對齊要求: " << alignment << " bytes" << std::endl;
     std::cout << "  對齊填充: " << padding << " bytes" << std::endl;
     std::cout << "  當前位址: " << (void*) currentAddress << std::endl;
-    std::cout << "  插入block的位址: " << (void*) block_address << std::endl;
+    std::cout << "  分配的位址: " << allocated_address << std::endl;
     std::cout << "  新偏移量: " << m_offset << " bytes" << std::endl;
     std::cout << "  剩餘空間: " << (m_totalSize - m_offset) << " bytes" << std::endl;
     std::cout << "  樹的結構: " << std::endl;
@@ -119,7 +137,7 @@ void *FreeTreeAllocator::Allocate(std::size_t size,const std::size_t alignment){
     m_used= m_offset;
     m_peak= std::max(m_peak,m_used);
 
-    return (void *)block_address;
+    return allocated_address; // 返回實際分配的記憶體地址
 
 }
 
@@ -134,6 +152,26 @@ FreeTreeAllocator** FreeTreeAllocator::find_free_tree(FreeTreeAllocator** root, 
     }
     return current;
     
+}
+
+// 根據地址查找節點
+FreeTreeAllocator* FreeTreeAllocator::findNodeByAddress(FreeTreeAllocator* node, void* ptr) {
+    if (node == nullptr) {
+        return nullptr;
+    }
+    
+    if (node->allocated_ptr == ptr) {
+        return node;
+    }
+    
+    // 遞迴搜索左子樹
+    FreeTreeAllocator* left_result = findNodeByAddress(node->l, ptr);
+    if (left_result != nullptr) {
+        return left_result;
+    }
+    
+    // 遞迴搜索右子樹
+    return findNodeByAddress(node->r, ptr);
 }
 
 //find the predecessor of the target node in free tree
@@ -212,10 +250,14 @@ void FreeTreeAllocator::Reset() {
 
 //配合benchmark的single free和mutliple free相關函式
 void FreeTreeAllocator::Free(void * ptr){
-    FreeTreeAllocator *node = (FreeTreeAllocator *)ptr;
-    remove_free_tree(&this->root,node);
-    m_offset -= node->size;
-    m_used= m_offset;
-    m_peak= std::max(m_peak,m_used);
-    delete node;
+    // 查找包含此地址的節點
+    FreeTreeAllocator* target = findNodeByAddress(this->root, ptr);
+    
+    if (target) {
+        remove_free_tree(&this->root, target);
+        m_offset -= target->size;
+        m_used = m_offset;
+        m_peak = std::max(m_peak, m_used);
+        delete target;
+    }
 }

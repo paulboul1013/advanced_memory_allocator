@@ -13,6 +13,8 @@ class FreeTreeAllocator : public Allocator{
         size_t size; //allocated memory block size in single node
         FreeTreeAllocator* l; //left child of the node
         FreeTreeAllocator* r; //right child of the node
+        void* allocated_ptr; // 節點中存儲的已分配記憶體地址
+        bool is_main_allocator; // 標識是否為主分配器
         
         
     public:
@@ -39,6 +41,8 @@ class FreeTreeAllocator : public Allocator{
         void inorder_traverse(FreeTreeAllocator* root);
 
         void free_tree(FreeTreeAllocator* root);
+        
+        FreeTreeAllocator* findNodeByAddress(FreeTreeAllocator* node, void* ptr);
 };
 
 #endif
